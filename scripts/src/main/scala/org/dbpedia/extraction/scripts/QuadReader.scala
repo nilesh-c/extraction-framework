@@ -1,6 +1,6 @@
 package org.dbpedia.extraction.scripts
 
-import java.io.File
+import java.io.{BufferedReader, File}
 import org.dbpedia.extraction.destinations.Quad
 import org.dbpedia.extraction.util.{Finder,Language}
 import org.dbpedia.extraction.util.RichFile.wrapFile
@@ -8,6 +8,7 @@ import org.dbpedia.extraction.util.StringUtils.prettyMillis
 import scala.Console.err
 import org.dbpedia.extraction.util.IOUtils
 import org.dbpedia.extraction.util.FileLike
+import org.dbpedia.extraction.util.RichReader.wrapReader
 
 /**
  */
@@ -20,7 +21,7 @@ object QuadReader {
   def readQuads[T <% FileLike[T]](finder: DateFinder[T], input: String, auto: Boolean = false)(proc: Quad => Unit): Unit = {
     readQuads(finder.language.wikiCode, finder.find(input, auto))(proc)
   }
-  
+
   /**
    * @param tag for logging
    * @param file input file
@@ -42,6 +43,35 @@ object QuadReader {
       }
     }
     logRead(tag, lineCount, start)
+  }
+
+  def iterateQuads[T <% FileLike[T]](finder: DateFinder[T], input: String, auto: Boolean = false): Iterable[Quad] = {
+    iterateQuads(finder.language.wikiCode, finder.find(input, auto))
+  }
+
+  def iterateQuads(tag: String, file: FileLike[_]): Iterable[Quad] = {
+    err.println(tag+": reading "+file+" ...")
+    new Iterable[Quad] {
+      override def iterator: Iterator[Quad] = {
+        new Iterator[Quad] {
+          val reader = new BufferedReader(IOUtils.reader(file))
+          var lineCount = 0
+          val start = System.nanoTime
+
+          override def hasNext: Boolean = {
+            val ready = reader.ready()
+            if(ready == false) reader.close()
+            ready
+          }
+
+          override def next(): Quad = {
+            reader.readLine()
+            lineCount += 1
+            if (lineCount % 1000000 == 0) logRead(tag, lineCount, start)
+          }
+        }
+      }
+    }
   }
   
   private def logRead(tag: String, lines: Int, start: Long): Unit = {

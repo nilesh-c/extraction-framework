@@ -251,9 +251,19 @@ object Language extends (String => Language)
       "http://www.wikidata.org/w/api.php"
     )
 
-
-
-
+    languages("data") =
+    new Language(
+      "data",
+      // TODO: This is the fused wiki - Language stays en?
+      "en",
+      "data.dbpedia.org",
+      "http://data.dbpedia.org",
+      new DBpediaNamespace("http://data.dbpedia.org/resource/"),
+      new DBpediaNamespace("http://data.dbpedia.org/property/"),
+      // TODO: Change baseUri and apiUri?
+      "http://www.data.dbpedia.org",
+      "http://www.data.dbpedia.org/w/api.php"
+    )
 
     languages("mappings") =
     new Language(
