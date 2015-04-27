@@ -2,13 +2,19 @@ package org.dbpedia.extraction.scripts
 
 import java.util.logging.Logger
 import org.dbpedia.extraction.util._
-import java.io.{Writer, File}
+import java.io.{StringWriter, Writer, File}
 import org.dbpedia.extraction.destinations.formatters.UriPolicy._
 import org.dbpedia.extraction.util.RichFile._
 import org.dbpedia.extraction.destinations._
 import org.dbpedia.extraction.destinations.formatters.Formatter
 import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable
+import org.apache.http.client.utils.URIBuilder
+import org.apache.http.message.BasicNameValuePair
+import org.apache.http.NameValuePair
+import java.util
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.module.scala.DefaultScalaModule
 
 /**
  * Created by nilesh on 23/4/15.
@@ -97,23 +103,49 @@ object FuseDatasets {
         }
 
         for((predicate, options) <- matchingTriples.groupBy(_._2.predicate)) {
-          destination.write(Seq())
+          val (accept, selected, others) = fuse(options)
+          val context = buildContext(accept, selected.map(_._1), others)
+          destination.write(selected.map(_._2.copy(context = context)))
         }
 
       }
-
-
     }
   }
 
-  private def fuse(options: Array[(String, Quad)]): Array[(String, Quad)] = {
-    // Dummy fusion function that selects the English triple if present, else the first one from the list
-    val selectedQuad = options.find(_._1 == "en") match {
-      case Some(quad) => quad
-      case _ => options.head
+  private def buildContext(howMany: String, acceptedLanguages: Seq[String], others: Array[(String, Quad)]) : String = {
+
+    val nameValuePairs = new util.ArrayList[NameValuePair]()
+    nameValuePairs.add(new BasicNameValuePair(howMany,""))
+    nameValuePairs.add(new BasicNameValuePair("accepted_langs", acceptedLanguages.mkString(",")))
+    others.map{
+      case (lang: String, quad: Quad) =>
+
     }
 
-    
+    URIBuilder builder = new URIBuilder()
+      .setScheme("http")
+      .setHost("www.leveluplunch.com")
+      .setParameters(nameValuePairs);
+
+  }
+
+  private case class AcceptCount()
+  private case class AcceptOne() extends AcceptCount
+  private case class AcceptAll() extends AcceptCount
+  private case class TripleValue(language: String, title, value: String, oldid: String, fragment: String)
+
+  /**
+   * Dummy fusion function that selects the first English triple if present, else the first one from the whole list
+   * @param options Array[(language code, quad)] - list of all available quads for a particular resource and predicate.
+   * @return Tuple2 of list of selected quads and list of the rest of the quads (to keep in context)
+   */
+  private def fuse(options: Array[(String, Quad)]): (AcceptCount, Array[(String, Quad)], Array[(String, Quad)]) = {
+    options.partition(_._1 == "en") match {
+      case (selectedQuad, others) if selectedQuad.nonEmpty =>
+        (AcceptOne(), selectedQuad.take(1), others ++ selectedQuad.drop(1))
+      case _ =>
+        (AcceptAll(), options.take(1), options.drop(1))
+    }
   }
 
   private def createDestination[T <% FileLike[T]](finder: Finder[T], date: String, formats: scala.collection.Map[String, Formatter], datasets: Seq[Dataset]) : Destination = {
@@ -133,5 +165,13 @@ object FuseDatasets {
 
   private def writer[T <% FileLike[T]](file: T): () => Writer = {
     () => IOUtils.writer(file)
+  }
+
+  val jsonMapper = new ObjectMapper()
+  jsonMapper.registerModule(DefaultScalaModule)
+  jsonMapper.registerSubtypes(classOf[TripleValue])
+
+  def serializeRejectedValues(options: Array[TripleValue]) : String = {
+    jsonMapper.writeValueAsString(options)
   }
 }
