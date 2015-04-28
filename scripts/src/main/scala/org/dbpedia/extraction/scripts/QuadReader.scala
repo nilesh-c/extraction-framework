@@ -65,9 +65,16 @@ object QuadReader {
           }
 
           override def next(): Quad = {
-            reader.readLine()
-            lineCount += 1
-            if (lineCount % 1000000 == 0) logRead(tag, lineCount, start)
+            reader.readLine() match {
+              case null => null // last value
+              case Quad(quad) => {
+                lineCount += 1
+                if (lineCount % 1000000 == 0) logRead(tag, lineCount, start)
+                quad
+              }
+              case str if str.nonEmpty && ! str.startsWith("#") =>
+                throw new IllegalArgumentException("line did not match quad or triple syntax: " + str)
+            }
           }
         }
       }
