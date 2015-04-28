@@ -15,6 +15,8 @@ import org.apache.http.NameValuePair
 import java.util
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
+import com.fasterxml.jackson.module.scala.experimental.ScalaObjectMapper
+import java.net.URI
 
 /**
  * Created by nilesh on 23/4/15.
@@ -104,35 +106,44 @@ object FuseDatasets {
 
         for((predicate, options) <- matchingTriples.groupBy(_._2.predicate)) {
           val (accept, selected, others) = fuse(options)
-          val context = buildContext(accept, selected.map(_._1), others)
-          destination.write(selected.map(_._2.copy(context = context)))
+          val context = buildContext(accept, selected, others) _
+          destination.write(selected.map{
+            case (lang: String, quad: Quad) =>
+              quad.copy(context = context(quad.subject))
+          })
         }
 
       }
     }
   }
 
-  private def buildContext(howMany: String, acceptedLanguages: Seq[String], others: Array[(String, Quad)]) : String = {
-
+  private def buildContext(howMany: AcceptCount, accepted: Array[(String, Quad)], others: Array[(String, Quad)])(resourceUri: String) : String = {
     val nameValuePairs = new util.ArrayList[NameValuePair]()
-    nameValuePairs.add(new BasicNameValuePair(howMany,""))
-    nameValuePairs.add(new BasicNameValuePair("accepted_langs", acceptedLanguages.mkString(",")))
-    others.map{
+    nameValuePairs.add(new BasicNameValuePair(
+      howMany match {
+        case AcceptAll() => "acceptall"
+        case AcceptOne() => "acceptone"
+      }, "1"))
+
+    val acceptedString = jsonMapper.writeValueAsString(accepted.map{
       case (lang: String, quad: Quad) =>
+        ContextAccepted(lang, quad.context)
+    })
+    nameValuePairs.add(new BasicNameValuePair("accepted", acceptedString))
 
-    }
+    val otherString = jsonMapper.writeValueAsString(others.map{
+      case (lang: String, quad: Quad) =>
+        ContextOther(lang, quad.value, quad.datatype, quad.context)
+    })
+    nameValuePairs.add(new BasicNameValuePair("others", otherString))
 
-    URIBuilder builder = new URIBuilder()
-      .setScheme("http")
-      .setHost("www.leveluplunch.com")
-      .setParameters(nameValuePairs);
-
+    val builder = new URIBuilder(resourceUri).setParameters(nameValuePairs)
+    builder.toString
   }
 
-  private case class AcceptCount()
+  private class AcceptCount()
   private case class AcceptOne() extends AcceptCount
   private case class AcceptAll() extends AcceptCount
-  private case class TripleValue(language: String, title, value: String, oldid: String, fragment: String)
 
   /**
    * Dummy fusion function that selects the first English triple if present, else the first one from the whole list
@@ -167,11 +178,12 @@ object FuseDatasets {
     () => IOUtils.writer(file)
   }
 
-  val jsonMapper = new ObjectMapper()
+  val jsonMapper = new ObjectMapper() with ScalaObjectMapper
   jsonMapper.registerModule(DefaultScalaModule)
-  jsonMapper.registerSubtypes(classOf[TripleValue])
-
-  def serializeRejectedValues(options: Array[TripleValue]) : String = {
-    jsonMapper.writeValueAsString(options)
-  }
+  jsonMapper.registerSubtypes(classOf[ContextOther])
+  jsonMapper.registerSubtypes(classOf[ContextAccepted])
 }
+
+class Context
+case class ContextOther(language: String, value: String, datatype: String, context: String) extends Context
+case class ContextAccepted(language: String, context: String) extends Context
