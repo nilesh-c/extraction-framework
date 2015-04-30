@@ -300,7 +300,12 @@ object Language extends (String => Language)
    * Wikimedia Wikidata
    */
   val Wikidata = map("wikidata")
-  
+
+  /**
+   * DBpedia fused data
+   */
+  val Data = map("data")
+
   /**
    * Gets a language object for a Wikipedia language code.
    * Throws IllegalArgumentException if language code is unknown.
