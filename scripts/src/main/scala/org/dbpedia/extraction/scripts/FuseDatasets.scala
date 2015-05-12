@@ -1,8 +1,8 @@
 package org.dbpedia.extraction.scripts
 
-import java.util.logging.Logger
+import java.util.logging.{Level, Logger}
 import org.dbpedia.extraction.util._
-import java.io.{StringWriter, Writer, File}
+import java.io._
 import org.dbpedia.extraction.destinations.formatters.UriPolicy._
 import org.dbpedia.extraction.util.RichFile._
 import org.dbpedia.extraction.destinations._
@@ -16,7 +16,7 @@ import java.util
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.fasterxml.jackson.module.scala.experimental.ScalaObjectMapper
-import java.net.URI
+import scala.language.implicitConversions
 
 /**
  * Created by nilesh on 23/4/15.
@@ -87,35 +87,84 @@ object FuseDatasets {
     val datasets = for(input <- inputs) yield new Dataset(input)
     val destination = createDestination(outputFinder, outputDate, formats, datasets)
 
+    val cache = outputFinder.file(outputDate, "wikidata-resources.obj")
+    val distinctWikidataQuads = try {
+      loadWikidataResourcesFromCache(cache)
+    } catch {
+      case ex : Exception => logger.log(Level.INFO, "Will extract wikidata resources from " + mappingPrefix + "wiki, could not load cache file '"+cache+"': "+ex)
+        val quads = QuadReader.iterateQuads(mappingFinder, mappingDataset + mappingSuffix, auto = true).map(x => if(x != null) x.subject else x).toSeq.dropRight(1).distinct
+
+        // Save Q-IDs to cache
+        val dir = cache.getParentFile
+        if (! dir.exists && ! dir.mkdirs) throw new IOException("cache dir ["+dir+"] does not exist and cannot be created")
+        val outputStream = new ObjectOutputStream(new FileOutputStream(cache))
+        try
+        {
+          outputStream.writeObject(quads)
+        }
+        finally
+        {
+          outputStream.close()
+        }
+        logger.info(quads.size + " wikidata resources written to cache file "+cache)
+        quads
+    }
+
     for (input <- inputs; suffix <- suffixes) {
-      val wikidataQuadIterator = QuadReader.iterateQuads(mappingFinder, mappingDataset + mappingSuffix, auto = true).iterator.buffered
-      val dbpediaQuadIterators: Array[(String, BufferedIterator[Quad])] = for(language <- languages) yield {
-        val wikiFinder = new DateFinder(baseDir, language) // Finds normalized datasets
-        (language.wikiCode, QuadReader.iterateQuads(wikiFinder, input + suffix, auto = true).iterator.buffered)
+        println(distinctWikidataQuads.length)
+        val dbpediaQuadIterators: Array[(String, EnrichedIterator[Quad])] = for(language <- languages) yield {
+          val wikiFinder = new DateFinder(baseDir, language) // Finds normalized datasets
+          (language.wikiCode, new EnrichedIterator(QuadReader.iterateQuads(wikiFinder, input + suffix, auto = true).iterator))
+        }
+
+        for (resource <- distinctWikidataQuads) {
+          //val resource = wikidataQuad.subject // Q id URI
+//          println(resource)
+          if(resource != null) {
+            val matchingTriples = dbpediaQuadIterators.flatMap { // iterate over sorted datasets
+              case (lang: String, quads: EnrichedIterator[Quad]) =>
+                quads.takeWhileOriginal(_.subject == resource).map((lang, _))
+            }
+
+            for((predicate, options) <- matchingTriples.groupBy(_._2.predicate)) {
+              val (accept, selected, others) = fuse(options)
+              val context = buildContext(accept, selected, others) _
+              destination.write(selected.map{
+                case (lang: String, quad: Quad) =>
+                  quad.copy(context = context(quad.subject))
+              })
+            }
+          }
+        }
       }
+    }
 
-      val iter = wikidataQuadIterator.toIterator.sliding(2).filterNot{case x :: y :: l => x == y}
-      val distinctWikidataQuads = (Iterator(List(null, iter.next()(0))) ++ iter).map{case x :: y :: l => y}
-      for (wikidataQuad <- distinctWikidataQuads) {
-        val resource = wikidataQuad.subject
+  private def loadWikidataResourcesFromCache(cache: File): Seq[String] = {
+    val inputStream = new ObjectInputStream(new FileInputStream(cache))
+    try
+    {
+      val quads = inputStream.readObject().asInstanceOf[Seq[String]]
 
-        val matchingTriples = dbpediaQuadIterators.flatMap {
-          case (lang: String, quads: BufferedIterator[Quad]) =>
-            quads.takeWhile(_.subject == resource).map((lang, _))
-        }
+      logger.info(quads.size + " wikidata resources loaded from cache file "+cache)
+      quads
+    }
+    finally
+    {
+      inputStream.close()
+    }
+  }
 
-        for((predicate, options) <- matchingTriples.groupBy(_._2.predicate)) {
-          val (accept, selected, others) = fuse(options)
-          val context = buildContext(accept, selected, others) _
-          destination.write(selected.map{
-            case (lang: String, quad: Quad) =>
-              quad.copy(context = context(quad.subject))
-          })
-        }
-
+  // enrich wrapper to give original functionality
+  class EnrichedIterator[T](it: Iterator[T]) {
+    def takeWhileOriginal(p: T=>Boolean) = {
+      val self = it.buffered
+      new Iterator[T] {
+        def hasNext = { self.hasNext && p(self.head) }
+        def next() = (if (hasNext) self else Iterator.empty).next()
       }
     }
   }
+  implicit def enrichIterator[T](it: Iterator[T]) = new EnrichedIterator(it)
 
   private def buildContext(howMany: AcceptCount, accepted: Array[(String, Quad)], others: Array[(String, Quad)])(resourceUri: String) : String = {
     val nameValuePairs = new util.ArrayList[NameValuePair]()
