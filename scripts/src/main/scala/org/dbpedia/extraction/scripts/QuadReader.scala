@@ -59,9 +59,11 @@ object QuadReader {
           val start = System.nanoTime
 
           override def hasNext: Boolean = {
-            val ready = reader.ready()
-            if(ready == false) reader.close()
-            ready
+            //val ready = reader.ready()
+            //if(ready == false) reader.close()
+            //println(ready)
+            //ready
+            true
           }
 
           override def next(): Quad = {
@@ -74,6 +76,8 @@ object QuadReader {
               }
               case str if str.nonEmpty && ! str.startsWith("#") =>
                 throw new IllegalArgumentException("line did not match quad or triple syntax: " + str)
+              case str if str.startsWith("#") =>
+                next()
             }
           }
         }
