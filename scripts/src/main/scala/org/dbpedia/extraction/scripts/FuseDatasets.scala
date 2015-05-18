@@ -191,6 +191,7 @@ object FuseDatasets {
    */
   private def fuse(options: Array[(String, Quad)]): (AcceptCount, Array[(String, Quad)], Array[(String, Quad)]) = {
     if(functionalProperties.contains(options.head._2.predicate) && options.head._2.language == null){
+      // If property is functional and it's not a langString, use voting
       val scores = options.groupBy(x => x._2.value).mapValues {
         case quads: Array[(String, Quad)] =>
           (quads, quads.foldLeft(0.0){
@@ -212,8 +213,10 @@ object FuseDatasets {
 
       (Accept(selectedQuads.length), selectedQuads, otherQuads.toArray)
     } else if (options.head._2.language != null) {
+      // If it's a langString, accept all
       (AcceptAll(), options, Array())
     } else {
+      // If non-functional and not a langString, choose the median language (n/2'th element of sorted array).
       val languageToQuads = options.groupBy(_._1)
       val quadsPerLanguage = languageToQuads.mapValues(_.length).toArray.sortBy(_._2)
       val medianLanguage = quadsPerLanguage(quadsPerLanguage.length / 2)._1
