@@ -13,6 +13,8 @@ import org.apache.http.client.utils.URIBuilder
 import org.apache.http.message.BasicNameValuePair
 import org.apache.http.NameValuePair
 import java.util
+import java.net.URL
+import scala.io.{Source, Codec}
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.fasterxml.jackson.module.scala.experimental.ScalaObjectMapper
@@ -31,7 +33,8 @@ object FuseDatasets {
   // URI prefix for wikidata entities
   private val WikidataResource = "http://wikidata.dbpedia.org/resource/Q"
 
-  def main(args: Array[String]): Unit = {
+  def main(arg: Array[String]): Unit = {
+    val args = "/data/aksw/dbpedia/extraction-framework2/extraction-framework/scripts/extraction.default.properties wikidata wikidata-sameas-sorted .ttl.bz2 mappingbased-properties-normalized-sorted 20150430".split(" ")
     require(args != null && args.length >= 6,
       "need at least six args: " +
         /*0*/ "extraction config file" +
@@ -77,7 +80,7 @@ object FuseDatasets {
 
     val mappingFinder = new DateFinder(baseDir, Language(mappingPrefix)) // Finds wikidata mapping dataset
     val outputFinder = new Finder(baseDir, Language(outputPrefix), "wiki")
-
+    val wikidataResourcePrefix = "http://wikidata.dbpedia.org/resource/Q"
     // Create output directories if they don't exist
     val dateDir = outputFinder.directory(outputDate)
     if(!dateDir.exists()) {
@@ -88,62 +91,47 @@ object FuseDatasets {
     val destination = createDestination(outputFinder, outputDate, formats, datasets)
 
     val cache = outputFinder.file(outputDate, "wikidata-resources.obj")
-    val distinctWikidataQuads = try {
-      loadWikidataResourcesFromCache(cache)
-    } catch {
-      case ex : Exception => logger.log(Level.INFO, "Will extract wikidata resources from " + mappingPrefix + "wiki, could not load cache file '"+cache+"': "+ex)
-        val quads = QuadReader.iterateQuads(mappingFinder, mappingDataset + mappingSuffix, auto = true).map(x => if(x != null) x.subject else x).toSeq.dropRight(1).distinct
-
-        // Save Q-IDs to cache
-        val dir = cache.getParentFile
-        if (! dir.exists && ! dir.mkdirs) throw new IOException("cache dir ["+dir+"] does not exist and cannot be created")
-        val outputStream = new ObjectOutputStream(new FileOutputStream(cache))
-        try
-        {
-          outputStream.writeObject(quads)
-        }
-        finally
-        {
-          outputStream.close()
-        }
-        logger.info(quads.size + " wikidata resources written to cache file "+cache)
-        quads
-    }
+    val wikidataQuadIterator = QuadReader.iterateQuads(mappingFinder, mappingDataset + mappingSuffix, auto = true).iterator
 
     for (input <- inputs; suffix <- suffixes) {
-        println(distinctWikidataQuads.length)
-        val dbpediaQuadIterators: Array[(String, EnrichedIterator[Quad])] = for(language <- languages) yield {
-          val wikiFinder = new DateFinder(baseDir, language) // Finds normalized datasets
-          (language.wikiCode, new EnrichedIterator(QuadReader.iterateQuads(wikiFinder, input + suffix, auto = true).iterator))
-        }
+      val dbpediaQuadIterators: Array[(String, EnrichedIterator[Quad])] = for(language <- languages) yield {
+        val wikiFinder = new DateFinder(baseDir, language) // Finds normalized datasets
+        (language.wikiCode, new EnrichedIterator(QuadReader.iterateQuads(wikiFinder, input + suffix, auto = true).iterator.buffered))
+      }
 
-        for (resource <- distinctWikidataQuads) {
-          //val resource = wikidataQuad.subject // Q id URI
-//          println(resource)
-          if(resource != null) {
-            val matchingTriples = dbpediaQuadIterators.flatMap { // iterate over sorted datasets
-              case (lang: String, quads: EnrichedIterator[Quad]) =>
-                quads.takeWhileOriginal(_.subject == resource).map((lang, _))
-            }
+      var currentResource = ""
+      for (wikidataQuad <- wikidataQuadIterator) {
+        val resource = if(wikidataQuad == null) null else wikidataQuad.subject
+        if (currentResource != resource && null != resource) {
+          currentResource = resource
 
-            for((predicate, options) <- matchingTriples.groupBy(_._2.predicate)) {
-              val (accept, selected, others) = fuse(options)
-              val context = buildContext(accept, selected, others) _
-              destination.write(selected.map{
-                case (lang: String, quad: Quad) =>
-                  quad.copy(context = context(quad.subject))
-              })
-            }
+          val matchingTriples = dbpediaQuadIterators.flatMap {
+            // iterate over sorted datasets
+            case (lang: String, quads: EnrichedIterator[Quad]) =>
+              if(quads.it.head.subject != resource)
+                Nil
+              else
+                quads.takeWhileOriginal(_.subject == resource).map((lang, _)).toArray
+          }
+
+          for ((predicate, options) <- matchingTriples.groupBy(_._2.predicate)) {
+            val (accept, selected, others) = fuse(options)
+            val context = buildContext(accept, selected, others) _
+            destination.write(selected.view.map(_._2).distinct.map{
+              case quad: Quad =>
+                quad.copy(context = context(quad.subject))
+            })
           }
         }
       }
     }
+  }
 
-  private def loadWikidataResourcesFromCache(cache: File): Seq[String] = {
+  private def loadWikidataResourcesFromCache(cache: File): List[Long] = {
     val inputStream = new ObjectInputStream(new FileInputStream(cache))
     try
     {
-      val quads = inputStream.readObject().asInstanceOf[Seq[String]]
+      val quads = inputStream.readObject().asInstanceOf[List[Long]]
 
       logger.info(quads.size + " wikidata resources loaded from cache file "+cache)
       quads
@@ -155,34 +143,34 @@ object FuseDatasets {
   }
 
   // enrich wrapper to give original functionality
-  class EnrichedIterator[T](it: Iterator[T]) {
+  class EnrichedIterator[T](val it: BufferedIterator[T]) {
     def takeWhileOriginal(p: T=>Boolean) = {
-      val self = it.buffered
+      val self = it
       new Iterator[T] {
         def hasNext = { self.hasNext && p(self.head) }
         def next() = (if (hasNext) self else Iterator.empty).next()
       }
     }
   }
-  implicit def enrichIterator[T](it: Iterator[T]) = new EnrichedIterator(it)
+  implicit def enrichIterator[T](it: BufferedIterator[T]) = new EnrichedIterator(it)
 
   private def buildContext(howMany: AcceptCount, accepted: Array[(String, Quad)], others: Array[(String, Quad)])(resourceUri: String) : String = {
     val nameValuePairs = new util.ArrayList[NameValuePair]()
-    nameValuePairs.add(new BasicNameValuePair(
+    nameValuePairs.add(new BasicNameValuePair("accept",
       howMany match {
-        case AcceptAll() => "acceptall"
-        case AcceptOne() => "acceptone"
-      }, "1"))
+        case AcceptAll() => ""
+        case Accept(count) => count.toString
+      }))
 
     val acceptedString = jsonMapper.writeValueAsString(accepted.map{
       case (lang: String, quad: Quad) =>
-        ContextAccepted(lang, quad.context)
+        ContextAccepted(lang, quad.value, quad.datatype, quad.context, quad.dataset)
     })
     nameValuePairs.add(new BasicNameValuePair("accepted", acceptedString))
 
     val otherString = jsonMapper.writeValueAsString(others.map{
       case (lang: String, quad: Quad) =>
-        ContextOther(lang, quad.value, quad.datatype, quad.context)
+        ContextOther(lang, quad.value, quad.datatype, quad.context, quad.dataset)
     })
     nameValuePairs.add(new BasicNameValuePair("others", otherString))
 
@@ -191,8 +179,10 @@ object FuseDatasets {
   }
 
   private class AcceptCount()
-  private case class AcceptOne() extends AcceptCount
+  private case class Accept(count: Int) extends AcceptCount
   private case class AcceptAll() extends AcceptCount
+
+  val wikiScores = WikiInfoExt.fromURL(WikiInfo.URL, Codec.UTF8).map(x => (x.language.wikiCode, x.editsPerUser)).toMap
 
   /**
    * Dummy fusion function that selects the first English triple if present, else the first one from the whole list
@@ -200,13 +190,69 @@ object FuseDatasets {
    * @return Tuple2 of list of selected quads and list of the rest of the quads (to keep in context)
    */
   private def fuse(options: Array[(String, Quad)]): (AcceptCount, Array[(String, Quad)], Array[(String, Quad)]) = {
-    options.partition(_._1 == "en") match {
-      case (selectedQuad, others) if selectedQuad.nonEmpty =>
-        (AcceptOne(), selectedQuad.take(1), others ++ selectedQuad.drop(1))
-      case _ =>
-        (AcceptAll(), options.take(1), options.drop(1))
+    if(functionalProperties.contains(options.head._2.predicate) && options.head._2.language == null){
+      val scores = options.groupBy(x => x._2.value).mapValues {
+        case quads: Array[(String, Quad)] =>
+          (quads, quads.foldLeft(0.0){
+            case (score: Double, quad: (String, Quad)) => score + wikiScores(quad._1)
+          }) // accumulate total score/vote for each value
+      }
+
+      val selected = scores.maxBy {
+        case (value: String, quadsAndScores: (Array[(String, Quad)], Double)) =>
+          quadsAndScores._2
+      }
+
+      val selectedQuads = selected._2._1.take(1)
+
+      val otherQuads = scores.filterNot(_._1 == selected._1).flatMap {
+        case (value: String, quadsAndScores: (Array[(String, Quad)], Double)) =>
+          quadsAndScores._1
+      }
+
+      (Accept(selectedQuads.length), selectedQuads, otherQuads.toArray)
+    } else if (options.head._2.language != null) {
+      (AcceptAll(), options, Array())
+    } else {
+      val languageToQuads = options.groupBy(_._1)
+      val quadsPerLanguage = languageToQuads.mapValues(_.length).toArray.sortBy(_._2)
+      val medianLanguage = quadsPerLanguage(quadsPerLanguage.length / 2)._1
+
+      val (selectedQuads, otherQuads) = options.partition(_._1 == medianLanguage)
+      (Accept(selectedQuads.length), selectedQuads, otherQuads)
     }
   }
+
+  val functionalProperties = Set("http://dbpedia.org/ontology/weight",
+    "http://dbpedia.org/ontology/acceleration",
+    "http://dbpedia.org/ontology/populationTotal",
+    "http://dbpedia.org/ontology/wheelbase",
+    "http://dbpedia.org/ontology/co2Emission",
+    "http://dbpedia.org/ontology/retirementDate",
+    "http://dbpedia.org/ontology/averageAnnualGeneration",
+    "http://dbpedia.org/ontology/height",
+    "http://dbpedia.org/ontology/topSpeed",
+    "http://dbpedia.org/ontology/birthYear",
+    "http://dbpedia.org/ontology/restingDate",
+    "http://dbpedia.org/ontology/zipCode",
+    "http://dbpedia.org/ontology/deathDate",
+    "http://dbpedia.org/ontology/fuelCapacity",
+    "http://dbpedia.org/ontology/latestReleaseDate",
+    "http://dbpedia.org/ontology/netIncome",
+    "http://dbpedia.org/ontology/deathYear",
+    "http://dbpedia.org/ontology/birthDate",
+    "http://dbpedia.org/ontology/installedCapacity",
+    "http://dbpedia.org/ontology/foalDate",
+    "http://dbpedia.org/ontology/redline",
+    "http://dbpedia.org/ontology/diameter",
+    "http://dbpedia.org/ontology/length",
+    "http://dbpedia.org/ontology/operatingIncome",
+    "http://dbpedia.org/ontology/torqueOutput",
+    "http://dbpedia.org/ontology/width",
+    "http://dbpedia.org/ontology/marketCapitalisation",
+    "http://dbpedia.org/ontology/fuelConsumption",
+    "http://dbpedia.org/ontology/displacement",
+    "http://dbpedia.org/ontology/powerOutput")
 
   private def createDestination[T <% FileLike[T]](finder: Finder[T], date: String, formats: scala.collection.Map[String, Formatter], datasets: Seq[Dataset]) : Destination = {
     val destination = new ArrayBuffer[Destination]()
@@ -234,5 +280,5 @@ object FuseDatasets {
 }
 
 class Context
-case class ContextOther(language: String, value: String, datatype: String, context: String) extends Context
-case class ContextAccepted(language: String, context: String) extends Context
+case class ContextOther(language: String, value: String, datatype: String, context: String, dataset: String) extends Context
+case class ContextAccepted(language: String, value: String, datatype: String, context: String, dataset: String) extends Context
