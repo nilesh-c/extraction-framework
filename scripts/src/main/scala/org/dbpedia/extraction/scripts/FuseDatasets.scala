@@ -53,6 +53,25 @@ object FuseDatasets {
 
     val config = ConfigUtils.loadConfig(args(0), "UTF-8")
 
+    val ontology = {
+      val ontologyFile = ConfigUtils.getValue(config, "ontology", false)(new File(_))
+      val ontologySource = if (ontologyFile != null && ontologyFile.isFile) {
+        XMLSource.fromFile(ontologyFile, Language.Mappings)
+      }
+      else {
+        val namespaces = Set(Namespace.OntologyClass, Namespace.OntologyProperty)
+        val url = new URL(Language.Mappings.apiUri)
+        WikiSource.fromNamespaces(namespaces, url, Language.Mappings)
+      }
+
+      new OntologyReader().read(ontologySource)
+    }
+
+    ontologyClasses = ontology.classes.map{
+      case (key: String, clazz: OntologyClass) =>
+        (clazz.uri, clazz)
+    }
+
     val baseDir = ConfigUtils.getValue(config, "base-dir", true)(new File(_))
     if (!baseDir.exists)
       throw new IllegalArgumentException("dir " + baseDir + " does not exist")
@@ -124,12 +143,13 @@ object FuseDatasets {
                 quads.takeWhileOriginal(_.subject == resource).map((lang, _)).toArray
           }
 
-          for ((predicate, options) <- matchingTriples.groupBy(_._2.predicate)) {
-            val (accept, selected, others) = fuse(options)
+        for ((predicate, options) <- matchingTriples.groupBy(_._2.predicate)) {
+          val (accept, selected, others) = fuse(options)
+          if(selected.nonEmpty || others.nonEmpty) {
             val context = buildContext(accept, selected, others) _
             destination.write(selected.view.map(_._2).distinct.map{
               case quad: Quad =>
-                quad.copy(context = context(quad.subject))
+                quad.copy(context = context(quad.subject), dataset = quad.dataset.replace(normalizedSuffix, ""))
             })
           }
         }
@@ -200,7 +220,12 @@ object FuseDatasets {
    * @return Tuple2 of list of selected quads and list of the rest of the quads (to keep in context)
    */
   private def fuse(options: Array[(String, Quad)]): (AcceptCount, Array[(String, Quad)], Array[(String, Quad)]) = {
-    if(functionalProperties.contains(options.head._2.predicate) && options.head._2.language == null){
+    val isLangString = options.head._2.datatype == "http://www.w3.org/1999/02/22-rdf-syntax-ns#langString"
+    val isRdfType = options.head._2.predicate.equals("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
+    val isAcceptAll = acceptAllProperties.contains(options.head._2.predicate)
+    val isFunctional = functionalProperties.contains(options.head._2.predicate)
+
+    if(isFunctional && !isLangString) {
       // If property is functional and it's not a langString, use voting
       val scores = options.groupBy(x => x._2.value).mapValues {
         case quads: Array[(String, Quad)] =>
@@ -222,11 +247,14 @@ object FuseDatasets {
       }
 
       (Accept(selectedQuads.length), selectedQuads, otherQuads.toArray)
-    } else if (options.head._2.language != null) {
+    } else if (isAcceptAll || isLangString) {
       // If it's a langString, accept all
       (AcceptAll(), options, Array())
+    } else if (isRdfType) {
+      val (selected, others) = chooseByType(options)
+      (Accept(selected.length), selected, others)
     } else {
-      // If non-functional and not a langString, choose the median language (n/2'th element of sorted array).
+      // For the rest and non-functional properties, choose the median language (n/2'th element of sorted array).
       val languageToQuads = options.groupBy(_._1)
       val quadsPerLanguage = languageToQuads.mapValues(_.length).toArray.sortBy(_._2)
       val medianLanguage = quadsPerLanguage(quadsPerLanguage.length / 2)._1
@@ -235,6 +263,41 @@ object FuseDatasets {
       (Accept(selectedQuads.length), selectedQuads, otherQuads)
     }
   }
+
+  def chooseByType(options: Array[(String, Quad)]): (Array[(String, Quad)], Array[(String, Quad)]) = {
+    try {
+      val types = options.map{
+        case (wikiCode: String, quad: Quad) =>
+          if(!quad.value.startsWith("http://dbpedia.org/ontology"))
+            throw NonDbpediaTypeEncountered(wikiCode, quad.dataset, quad.value)
+          (wikiCode, quad, ontologyClasses(quad.value))
+      } // map to language, quad, class
+      val typeScores = types.map{
+          case (wikiCode: String, _, ontologyClass: OntologyClass) =>
+            (wikiCode, ontologyClass, types.view.map(x => if(ontologyClass.relatedClasses.contains(x._2)) 1 else 0).sum)
+        }.sortBy(_._3) // more specific class gets more score
+
+      val selectedType = typeScores.head._2 // choose the type with the best score (choose the top-most one if it's a tie)
+      val (selected, others) = types.partition(_._3.equals(selectedType)) // select quads (each from a different language) with that type
+      (selected.map(x => (x._1, x._2)), others.map(x => (x._1, x._2)))
+    } catch {
+      case NonDbpediaTypeEncountered(wikiCode, dataset, typeUri) =>
+        logger.warning("%swiki: encountered non-DBpedia type URI in %s: %s".format(wikiCode, dataset, typeUri))
+        (Array(), Array())
+      case ex: Exception =>
+        logger.info("Exception occured while fusing types: " + ex)
+        (Array(), Array())
+    }
+  }
+
+  val acceptAllProperties = Set("http://dbpedia.org/ontology/wikiPageWikiLink",
+    "http://www.w3.org/2004/02/skos/core#broader",
+    "http://www.w3.org/2004/02/skos/core#prefLabel",
+    "http://www.w3.org/2004/02/skos/core#related",
+    "http://purl.org/dc/terms/subject",
+    "http://dbpedia.org/ontology/wikiPageExternalLink",
+    "http://dbpedia.org/ontology/wikiPageRedirects",
+    "http://dbpedia.org/ontology/wikiPageDisambiguates")
 
   val functionalProperties = Set("http://dbpedia.org/ontology/weight",
     "http://dbpedia.org/ontology/acceleration",
