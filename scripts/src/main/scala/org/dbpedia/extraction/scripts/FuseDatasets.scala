@@ -265,7 +265,16 @@ object FuseDatasets {
     "http://dbpedia.org/ontology/marketCapitalisation",
     "http://dbpedia.org/ontology/fuelConsumption",
     "http://dbpedia.org/ontology/displacement",
-    "http://dbpedia.org/ontology/powerOutput")
+    "http://dbpedia.org/ontology/powerOutput",
+    "http://www.w3.org/2003/01/geo/wgs84_pos#lat",
+    "http://www.w3.org/2003/01/geo/wgs84_pos#long",
+    "http://www.georss.org/georss/point",
+    "http://dbpedia.org/ontology/iso31661Code",
+    "http://dbpedia.org/ontology/iso6391Code",
+    "http://dbpedia.org/ontology/iso6392Code",
+    "http://dbpedia.org/ontology/iso6393Code",
+    "http://dbpedia.org/ontology/totalPopulation",
+    "http://xmlns.com/foaf/0.1/homepage")
 
   private def createDestination[T <% FileLike[T]](finder: Finder[T], date: String, formats: scala.collection.Map[String, Formatter], datasets: Seq[Dataset]) : Destination = {
     val destination = new ArrayBuffer[Destination]()
