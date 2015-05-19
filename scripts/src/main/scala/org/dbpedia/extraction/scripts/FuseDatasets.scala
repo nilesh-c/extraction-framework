@@ -144,6 +144,11 @@ object FuseDatasets {
 
         for ((predicate, options) <- matchingTriples.groupBy(_._2.predicate)) {
           val (accept, selected, others) = fuse(options)
+          if(selected.isEmpty && others.nonEmpty) {
+            val context = buildContext(accept, selected, others)("http://data.dbpedia.org/rejected")
+            logger.warning("All triples rejected. Dumping context...\n" + context)
+          }
+
           if(selected.nonEmpty || others.nonEmpty) {
             val context = buildContext(accept, selected, others) _
             destination.write(selected.view.map(_._2).distinct.map{
