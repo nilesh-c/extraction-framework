@@ -139,7 +139,7 @@ object FuseDatasets {
               if(quads.it.head.subject != resource)
                 Nil
               else
-                quads.takeWhileOriginal(_.subject == resource).map((lang, _)).toArray
+                quads.takeWhileOriginal(_.subject == resource).map((lang, _))
           }
 
         for ((predicate, options) <- matchingTriples.groupBy(_._2.predicate)) {
