@@ -19,12 +19,17 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.scala.DefaultScalaModule
 import com.fasterxml.jackson.module.scala.experimental.ScalaObjectMapper
 import scala.language.implicitConversions
+import org.dbpedia.extraction.sources.{XMLSource, WikiSource}
+import org.dbpedia.extraction.ontology.io.OntologyReader
+import org.dbpedia.extraction.wikiparser.Namespace
+import org.dbpedia.extraction.ontology.OntologyClass
 
 /**
  * Created by nilesh on 23/4/15.
  */
 object FuseDatasets {
   private val logger = Logger.getLogger(FuseDatasets.getClass.getName)
+  private var ontologyClasses: Map[String, OntologyClass] = null
 
   private def split(arg: String): Array[String] = {
     arg.split(",").map(_.trim).filter(_.nonEmpty)
@@ -34,15 +39,16 @@ object FuseDatasets {
   private val WikidataResource = "http://wikidata.dbpedia.org/resource/Q"
 
   def main(arg: Array[String]): Unit = {
-    val args = "/data/aksw/dbpedia/extraction-framework2/extraction-framework/scripts/extraction.default.properties wikidata wikidata-sameas-sorted .ttl.bz2 mappingbased-properties-normalized-sorted 20150430".split(" ")
+    val args = "/data/aksw/dbpedia/extraction-framework2/extraction-framework/scripts/extraction.default.properties wikidata wikidata-sameas-sorted .ttl.bz2 mappingbased-properties,labels -normalized-sorted 20150430".split(" ")
     require(args != null && args.length >= 6,
       "need at least six args: " +
         /*0*/ "extraction config file" +
         /*1*/ "prefix of mapping file (eg. wikidata)" +
         /*2*/ "Sorted dataset mapping URIs to wikidata identifiers (eg. wikidata-sameas-sorted)" +
         /*3*/ "mapping file suffix (e.g. '.nt.gz', '.ttl', '.ttl.bz2'), " +
-        /*4*/ "comma-separated names of input datasets (e.g. 'infobox-properties-normalized-sorted,mappingbased-properties-normalized-sorted'), " +
-        /*5*/ "output date in YYYYMMDD format")
+        /*4*/ "comma-separated names of input datasets (e.g. 'infobox-properties,mappingbased-properties'), " +
+        /*5*/ "normalized datasets suffix (e.g. '-normalized-sorted'), " +
+        /*6*/ "output date in YYYYMMDD format")
 
 
     val config = ConfigUtils.loadConfig(args(0), "UTF-8")
@@ -66,10 +72,14 @@ object FuseDatasets {
     val mappingSuffix = args(3)
     require(mappingSuffix.nonEmpty, "no mapping file suffix")
 
-    val inputs = split(args(4))
+    val normalizedSuffix = args(5)
+    require(normalizedSuffix.nonEmpty, "normalized datasets suffix not given")
+
+    val inputs = split(args(4)).map(_ + normalizedSuffix)
     require(inputs.nonEmpty, "no input datasets")
 
-    val outputDate = args(5)
+    val outputDate = args(6)
+    require(outputDate.nonEmpty, "no output date")
 
     val outputPrefix = "data"
 
@@ -285,3 +295,4 @@ object FuseDatasets {
 class Context
 case class ContextOther(language: String, value: String, datatype: String, context: String, dataset: String) extends Context
 case class ContextAccepted(language: String, value: String, datatype: String, context: String, dataset: String) extends Context
+case class NonDbpediaTypeEncountered(wikiCode: String, dataset: String, typeUri: String) extends Exception
