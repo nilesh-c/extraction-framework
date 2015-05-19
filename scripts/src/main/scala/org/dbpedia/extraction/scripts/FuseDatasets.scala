@@ -120,13 +120,12 @@ object FuseDatasets {
     val destination = createDestination(outputFinder, outputDate, formats, datasets)
 
     val cache = outputFinder.file(outputDate, "wikidata-resources.obj")
-    val wikidataQuadIterator = QuadReader.iterateQuads(mappingFinder, mappingDataset + mappingSuffix, auto = true).iterator
+    val wikidataQuadIterator = QuadReader.iterateQuads(mappingFinder, mappingDataset, mappingSuffix, auto = true).iterator
 
-    for (input <- inputs; suffix <- suffixes) {
-      val dbpediaQuadIterators: Array[(String, EnrichedIterator[Quad])] = for(language <- languages) yield {
-        val wikiFinder = new DateFinder(baseDir, language) // Finds normalized datasets
-        (language.wikiCode, new EnrichedIterator(QuadReader.iterateQuads(wikiFinder, input + suffix, auto = true).iterator.buffered))
-      }
+    val dbpediaQuadIterators: Array[(String, EnrichedIterator[Quad])] = for(language <- languages; input <- inputs; suffix <- suffixes) yield {
+      val wikiFinder = new DateFinder(baseDir, language) // Finds normalized datasets
+      (language.wikiCode, new EnrichedIterator(QuadReader.iterateQuads(wikiFinder, input, suffix, auto = true).iterator.buffered))
+    }
 
       var currentResource = ""
       for (wikidataQuad <- wikidataQuadIterator) {

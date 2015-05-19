@@ -13,7 +13,7 @@ import org.dbpedia.extraction.util.RichReader.wrapReader
 /**
  */
 object QuadReader {
-  
+
   /**
    * @param input file name, e.g. interlanguage-links-same-as.nt.gz
    * @param proc process quad
@@ -45,11 +45,11 @@ object QuadReader {
     logRead(tag, lineCount, start)
   }
 
-  def iterateQuads[T <% FileLike[T]](finder: DateFinder[T], input: String, auto: Boolean = false): Iterable[Quad] = {
-    iterateQuads(finder.language.wikiCode, finder.find(input, auto))
+  def iterateQuads[T <% FileLike[T]](finder: DateFinder[T], dataset: String, suffix: String, auto: Boolean = false): Iterable[Quad] = {
+    iterateQuads(finder.language.wikiCode, finder.find(dataset + suffix, auto), dataset)
   }
 
-  def iterateQuads(tag: String, file: FileLike[_]): Iterable[Quad] = {
+  def iterateQuads(tag: String, file: FileLike[_], dataset: String): Iterable[Quad] = {
     err.println(tag+": reading "+file+" ...")
     new Iterable[Quad] {
       override def iterator: Iterator[Quad] = {
@@ -72,7 +72,9 @@ object QuadReader {
               case Quad(quad) => {
                 lineCount += 1
                 if (lineCount % 1000000 == 0) logRead(tag, lineCount, start)
-                quad
+                if(quad.subject == "http://wikidata.dbpedia.org/resource/Q1000001")
+                  println(tag + ": encountered quad: " + quad)
+                quad.copy(dataset = dataset)
               }
               case str if str.nonEmpty && ! str.startsWith("#") =>
                 throw new IllegalArgumentException("line did not match quad or triple syntax: " + str)
@@ -84,7 +86,7 @@ object QuadReader {
       }
     }
   }
-  
+
   private def logRead(tag: String, lines: Int, start: Long): Unit = {
     val micros = (System.nanoTime - start) / 1000
     err.println(tag+": read "+lines+" lines in "+prettyMillis(micros / 1000)+" ("+(micros.toFloat / lines)+" micros per line)")
