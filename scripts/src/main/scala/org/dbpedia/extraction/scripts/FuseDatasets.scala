@@ -127,24 +127,8 @@ object FuseDatasets {
       (language.wikiCode, new EnrichedIterator(QuadReader.iterateQuads(wikiFinder, input, suffix, auto = true).iterator.buffered))
     }
 
-      var currentResource = ""
-
-      destination.open()
-
-      for (wikidataQuad <- wikidataQuadIterator) {
-        val resource = if(wikidataQuad == null) null else wikidataQuad.subject
-        if (currentResource != resource && null != resource) {
-          currentResource = resource
-
-          val matchingTriples = dbpediaQuadIterators.flatMap {
-            // iterate over sorted datasets
-            case (lang: String, quads: EnrichedIterator[Quad]) =>
-              if(quads.it.head.subject != resource)
-                Nil
-              else
-                quads.takeWhileOriginal(_.subject == resource).map((lang, _))
-          }
-
+    val workers = SimpleWorkers(1.5, 1.0) {
+      matchingTriples: Array[(String, Quad)] =>
         for ((predicate, options) <- matchingTriples.groupBy(_._2.predicate)) {
           val (accept, selected, others) = fuse(options)
           if(selected.isEmpty && others.nonEmpty) {
@@ -156,13 +140,41 @@ object FuseDatasets {
             val context = buildContext(accept, selected, others) _
             destination.write(selected.view.map(_._2).distinct.map{
               case quad: Quad =>
-                quad.copy(context = context(quad.subject), dataset = quad.dataset.replace(normalizedSuffix, ""))
+                quad.copy(context = context(quad.subject))
             })
           }
+        }
+    }
+
+    destination.open()
+    workers.start()
+
+    var currentResource = ""
+    for (wikidataQuad <- wikidataQuadIterator) {
+      val resource = if(wikidataQuad == null) null else wikidataQuad.subject
+      if (currentResource != resource && null != resource) {
+        currentResource = resource
+
+        val matchingTriples = dbpediaQuadIterators.flatMap {
+          // iterate over sorted datasets
+          case (lang: String, quads: EnrichedIterator[Quad]) =>
+            if(quads.it.head.subject != resource)
+              Nil
+            else
+              quads.takeWhileOriginal(_.subject == resource).map((lang, _))
+        }
+
+        if(matchingTriples.length > 0) {
+          workers.process(matchingTriples.map{
+            case (lang: String, quad: Quad) =>
+              // hack to replace the -normalized-sorted part from dataset names.
+              (lang, quad.copy(dataset = quad.dataset.replace(normalizedSuffix, "")))
+          })
         }
       }
     }
 
+    workers.stop()
     destination.close()
   }
 
