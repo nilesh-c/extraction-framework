@@ -128,6 +128,9 @@ object FuseDatasets {
     }
 
       var currentResource = ""
+
+      destination.open()
+
       for (wikidataQuad <- wikidataQuadIterator) {
         val resource = if(wikidataQuad == null) null else wikidataQuad.subject
         if (currentResource != resource && null != resource) {
@@ -159,6 +162,8 @@ object FuseDatasets {
         }
       }
     }
+
+    destination.close()
   }
 
   private def loadWikidataResourcesFromCache(cache: File): List[Long] = {
