@@ -35,11 +35,7 @@ object FuseDatasets {
     arg.split(",").map(_.trim).filter(_.nonEmpty)
   }
 
-  // URI prefix for wikidata entities
-  private val WikidataResource = "http://wikidata.dbpedia.org/resource/Q"
-
-  def main(arg: Array[String]): Unit = {
-    val args = "/data/aksw/dbpedia/extraction-framework2/extraction-framework/scripts/extraction.default.properties wikidata wikidata-sameas-sorted .ttl.bz2 mappingbased-properties,labels -normalized-sorted 20150430".split(" ")
+  def main(args: Array[String]): Unit = {
     require(args != null && args.length >= 6,
       "need at least six args: " +
         /*0*/ "extraction config file" +
@@ -109,7 +105,7 @@ object FuseDatasets {
 
     val mappingFinder = new DateFinder(baseDir, Language(mappingPrefix)) // Finds wikidata mapping dataset
     val outputFinder = new Finder(baseDir, Language(outputPrefix), "wiki")
-    val wikidataResourcePrefix = "http://wikidata.dbpedia.org/resource/Q"
+
     // Create output directories if they don't exist
     val dateDir = outputFinder.directory(outputDate)
     if(!dateDir.exists()) {
@@ -176,21 +172,6 @@ object FuseDatasets {
 
     workers.stop()
     destination.close()
-  }
-
-  private def loadWikidataResourcesFromCache(cache: File): List[Long] = {
-    val inputStream = new ObjectInputStream(new FileInputStream(cache))
-    try
-    {
-      val quads = inputStream.readObject().asInstanceOf[List[Long]]
-
-      logger.info(quads.size + " wikidata resources loaded from cache file "+cache)
-      quads
-    }
-    finally
-    {
-      inputStream.close()
-    }
   }
 
   // enrich wrapper to give original functionality
