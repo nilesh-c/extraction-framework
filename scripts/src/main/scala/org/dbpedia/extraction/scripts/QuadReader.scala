@@ -72,8 +72,6 @@ object QuadReader {
               case Quad(quad) => {
                 lineCount += 1
                 if (lineCount % 1000000 == 0) logRead(tag, lineCount, start)
-                if(quad.subject == "http://wikidata.dbpedia.org/resource/Q1000001")
-                  println(tag + ": encountered quad: " + quad)
                 quad.copy(dataset = dataset)
               }
               case str if str.nonEmpty && ! str.startsWith("#") =>
