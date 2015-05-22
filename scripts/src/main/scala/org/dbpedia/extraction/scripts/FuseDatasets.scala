@@ -90,7 +90,7 @@ object FuseDatasets {
     val normalizedSuffix = args(5)
     require(normalizedSuffix.nonEmpty, "normalized datasets suffix not given")
 
-    val inputs = split(args(4)).map(_ + normalizedSuffix)
+    val inputs = split(args(4)).map(_.replace("_", "-") + normalizedSuffix)
     require(inputs.nonEmpty, "no input datasets")
 
     val outputDate = args(6)
