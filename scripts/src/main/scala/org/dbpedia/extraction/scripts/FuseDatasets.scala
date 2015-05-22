@@ -116,7 +116,7 @@ object FuseDatasets {
       dateDir.mkdirs()
     }
 
-    val datasets = for(input <- inputs) yield new Dataset(input)
+    val datasets = for(input <- inputs) yield new Dataset(input.replace(normalizedSuffix, ""))
     val destination = createDestination(outputFinder, outputDate, formats, datasets)
 
     val cache = outputFinder.file(outputDate, "wikidata-resources.obj")
@@ -158,7 +158,7 @@ object FuseDatasets {
         val matchingTriples = dbpediaQuadIterators.flatMap {
           // iterate over sorted datasets
           case (lang: String, quads: EnrichedIterator[Quad]) =>
-            if(quads.it.head.subject != resource)
+            if(quads.it.head == null || quads.it.head.subject != resource)
               Nil
             else
               quads.takeWhileOriginal(_.subject == resource).map((lang, _))
